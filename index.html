@@ -77,6 +77,9 @@
     .booking-divider::after{content:'';height:1px;background:var(--line);flex:1}
     .field-label,fieldset legend{display:block;font-size:.8125rem;font-weight:700;margin-bottom:10px}
     input[type=date],input[type=text],input[type=tel]{width:100%;min-width:0;min-height:51px;border:1px solid #cbd5dd;border-radius:4px;background:#fff;color:var(--ink);padding:12px 14px;font-size:16px;color-scheme:light;transition:border-color .2s}
+    input[type=date]{display:block;-webkit-appearance:none;appearance:none;line-height:1.4;text-align:left}
+    input[type=date]::-webkit-date-and-time-value{text-align:left;min-height:1.4em;line-height:1.4}
+    @media(max-width:760px){input[type=date]{text-align:center}input[type=date]::-webkit-date-and-time-value{text-align:center}}
     input::placeholder{color:#717e89}
     input:focus{border-color:var(--blue)}
     input[aria-invalid=true]{border-color:var(--red)}

@@ -675,8 +675,8 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
 }
 </style>
 <script>
-  // Theme before first paint: the visitor's saved choice, otherwise the system setting
-  (function(){var t;try{t=localStorage.getItem('razor-theme')}catch(e){}document.documentElement.setAttribute('data-theme',t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))})();
+  // Theme before first paint: the visitor's saved choice, otherwise dark
+  (function(){var t;try{t=localStorage.getItem('razor-theme')}catch(e){}document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark')})();
 </script>
 </head>
 <body>
@@ -1387,7 +1387,7 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
     const root = document.documentElement;
     const CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
 
-    // Theme: follows the system until the visitor picks one; the new theme spreads from the button
+    // Theme: dark until the visitor picks light; the new theme spreads from the button
     const themeBtn = document.getElementById('theme-toggle');
     const setTheme = (t, save) => {
       root.setAttribute('data-theme', t);
@@ -1404,11 +1404,6 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
         root.animate({ clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
           { duration: 750, easing: 'cubic-bezier(.2,.75,.2,1)', pseudoElement: '::view-transition-new(root)' });
       });
-    });
-    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-      let saved = null;
-      try { saved = localStorage.getItem('razor-theme'); } catch (err) {}
-      if (!saved) setTheme(e.matches ? 'dark' : 'light');
     });
 
     // Open-now status (shop time zone)

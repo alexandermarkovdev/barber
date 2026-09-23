@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="bg">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#121416">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Razor">
+<title>Razor — График</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main class="app">
+
+  <!-- Starting up -->
+  <section class="screen center" id="loading">
+    <div class="brand">RAZOR<small>ГРАФИК</small></div>
+    <p class="muted">Зареждане…</p>
+  </section>
+
+  <!-- config.js not filled in yet -->
+  <section class="screen center" id="setup" hidden>
+    <div class="brand">RAZOR<small>ГРАФИК</small></div>
+    <h1>Базата данни не е свързана</h1>
+    <p class="muted" id="setup-text">Попълни адреса и публичния ключ на Supabase в <b>config.js</b> (виж SETUP.md) и презареди страницата.</p>
+  </section>
+
+  <!-- Login -->
+  <section class="screen center" id="login" hidden>
+    <div class="brand">RAZOR<small>ГРАФИК</small></div>
+    <form class="card form" id="login-form" novalidate>
+      <label>Имейл<input type="email" name="email" autocomplete="username" inputmode="email" required></label>
+      <label>Парола<input type="password" name="password" autocomplete="current-password" required></label>
+      <p class="form-msg" role="alert"></p>
+      <button class="btn btn--primary" type="submit">Вход</button>
+    </form>
+  </section>
+
+  <!-- Logged in but not listed as the barber -->
+  <section class="screen center" id="denied" hidden>
+    <div class="brand">RAZOR<small>ГРАФИК</small></div>
+    <h1>Нямаш достъп</h1>
+    <p class="muted">Този профил не е добавен като администратор. Виж последната стъпка в SETUP.md.</p>
+    <button class="btn" type="button" data-logout>Изход</button>
+  </section>
+
+  <!-- Day schedule -->
+  <section class="screen" id="schedule" hidden>
+    <header class="top">
+      <span class="brand-sm">RAZOR</span>
+      <span class="live" id="live" data-state="off"><i aria-hidden="true"></i><span>Свързване…</span></span>
+      <button class="link" type="button" data-logout>Изход</button>
+    </header>
+
+    <nav class="daynav" aria-label="Ден">
+      <button class="round" type="button" id="prev" aria-label="Предишен ден">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <button class="day-label" type="button" id="day-label" aria-label="Избери дата">
+        <strong id="day-name"></strong><span id="day-date"></span>
+      </button>
+      <input type="date" id="day-picker" tabindex="-1" aria-hidden="true">
+      <button class="round" type="button" id="next" aria-label="Следващ ден">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+      </button>
+    </nav>
+
+    <div class="dayinfo">
+      <button class="chip" type="button" id="today-btn">Днес</button>
+      <span id="summary" class="muted"></span>
+    </div>
+    <p class="note" id="closed-note" hidden>Почивен ден — клиентите не могат да запазват онлайн. Ти все пак можеш да добавяш часове.</p>
+    <p class="note note--error" id="load-error" hidden>Графикът не се зареди. <button class="link" type="button" id="retry">Опитай пак</button></p>
+
+    <ol class="slots" id="slots"></ol>
+  </section>
+</main>
+
+<!-- Book / edit -->
+<dialog class="sheet" id="sheet" aria-labelledby="sheet-title">
+  <form class="form" id="sheet-form" novalidate>
+    <h2 id="sheet-title"></h2>
+    <label>Име<input name="name" maxlength="80" autocomplete="off" required></label>
+    <label>Телефон<input name="phone" type="tel" inputmode="tel" maxlength="30" autocomplete="off"></label>
+    <label>Бележка<textarea name="notes" maxlength="500" rows="2"></textarea></label>
+    <p class="form-msg" role="alert"></p>
+    <div class="sheet-actions">
+      <button class="btn" type="button" data-close>Назад</button>
+      <button class="btn btn--primary" type="submit" id="sheet-save">Запази</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Cancel confirmation -->
+<dialog class="sheet" id="confirm" aria-labelledby="confirm-title">
+  <h2 id="confirm-title">Да отменя ли часа?</h2>
+  <p class="muted" id="confirm-text"></p>
+  <div class="sheet-actions">
+    <button class="btn" type="button" data-close>Назад</button>
+    <button class="btn btn--danger" type="button" id="confirm-ok">Да, отмени</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../config.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

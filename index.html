@@ -568,6 +568,8 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
 .ticket-when strong{font-family:var(--serif);font-weight:500;font-size:24px;line-height:1.2}
 .ticket-when b{font-family:var(--serif);font-weight:500;font-size:44px;line-height:1;font-variant-numeric:tabular-nums}
 .ticket-top p{font-size:14px;color:var(--on-dark-muted)}
+.ticket-tag.ok{color:#9fe0b8}
+.btn--submit[disabled]{opacity:.75;cursor:progress}
 .ticket-tear{position:relative;margin:0 20px;border-top:2px dashed #4a525a}
 .ticket-tear::before,.ticket-tear::after{content:"";position:absolute;top:-12px;width:22px;height:22px;border-radius:50%;background:#fff}
 .ticket-tear::before{left:-32px}
@@ -1111,6 +1113,8 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
   </div>
 </dialog>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
 <script>
 (() => {
   // Background silhouettes: deal the tools out in a fixed rotation, slot by slot
@@ -1272,49 +1276,127 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
   dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close(); });
   dialog.addEventListener('close', () => { dialogImg.removeAttribute('src'); photos[current].focus(); });
 
-  // Booking form — TEMPLATE ONLY. Slots are sample data and nothing is sent.
-  // BACKEND HANDOFF: replace getSlots() and the submit handler with real API calls.
-  const SHOP = { timeZone: 'Europe/Sofia', closedDay: 2, opens: 600, closes: 1080, slotMinutes: 30, bookingDays: 14 };
+  // ================= Online booking =================
+  // Real bookings go to Supabase when config.js holds the project URL and public key.
+  // Without them the form runs as a demo, so the page still works while the database is being set up.
+  const CFG = window.RAZOR_CONFIG || {};
+  const configured = !!(CFG.supabaseUrl && CFG.supabaseAnonKey && !/YOUR[-_]/i.test(CFG.supabaseUrl + CFG.supabaseAnonKey));
+  const db = configured && window.supabase ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey) : null;
+  const DEMO = !configured;
+  const PHONE = '089 696 8068';
+  // Defaults match the site; the real values are loaded from business_settings
+  const SHOP = { timeZone: 'Europe/Sofia', opens: 600, closes: 1080, slotMinutes: 30, closedDays: [2], bookingDays: 14 };
+
   const form = document.getElementById('booking-form');
   const dateInput = document.getElementById('appointment-date');
+  const strip = document.getElementById('date-strip');
   const slotsBox = document.getElementById('time-slots');
   const slotStatus = document.getElementById('slot-status');
   const message = document.getElementById('booking-message');
   const nameInput = document.getElementById('customer-name');
   const phoneInput = document.getElementById('customer-phone');
+  const submitBtn = document.getElementById('booking-submit');
+  const submitHTML = submitBtn.innerHTML;
 
-  const shopNow = () => {
-    const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: SHOP.timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value]));
-    return { date: `${p.year}-${p.month}-${p.day}`, minutes: +p.hour * 60 + +p.minute };
-  };
+  // ---- Shop-time helpers: the shop's clock is Europe/Sofia, whatever the visitor's own time zone is ----
+  const pad = n => String(n).padStart(2, '0');
+  const hhmm = m => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+  const toMinutes = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+  const tzParts = ms => Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: SHOP.timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .formatToParts(new Date(ms)).map(p => [p.type, p.value]));
+  const shopNow = () => { const p = tzParts(Date.now()); return { date: `${p.year}-${p.month}-${p.day}`, minutes: +p.hour * 60 + +p.minute }; };
   const addDays = (iso, n) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
   const weekdayOf = iso => new Date(`${iso}T12:00:00Z`).getUTCDay();
-
-  function getSlots(iso) {
-    const now = shopNow(), busy = new Set(['11:00', '13:00', '15:30']), out = [];
-    for (let m = SHOP.opens; m + SHOP.slotMinutes <= SHOP.closes; m += SHOP.slotMinutes) {
-      const time = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-      out.push({ time, available: !busy.has(time) && (iso !== now.date || m > now.minutes) });
-    }
-    return out;
-  }
   const dayLabel = iso => {
     const s = new Intl.DateTimeFormat('bg-BG', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(`${iso}T12:00:00Z`));
     return s.charAt(0).toUpperCase() + s.slice(1);
   };
-  const showMessage = (text = '', error = false) => { message.textContent = text; message.classList.toggle('error', error); };
+  // Shop-local date + time → exact instant (handles the summer/winter clock change)
+  const offsetAt = ms => { const p = tzParts(ms); return Date.UTC(+p.year, p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - ms; };
+  const shopTimeToIso = (iso, minutes) => {
+    const [y, mo, d] = iso.split('-').map(Number);
+    const wall = Date.UTC(y, mo - 1, d, Math.floor(minutes / 60), minutes % 60);
+    let ms = wall - offsetAt(wall);
+    ms = wall - offsetAt(ms);
+    return new Date(ms).toISOString();
+  };
+  const isoToShop = ts => { const p = tzParts(Date.parse(ts)); return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` }; };
+
+  // ---- Which slots are taken: shop date → set of "HH:MM" (booked and blocked look the same to visitors) ----
+  const taken = new Map();
+  const setTaken = (ts, on) => {
+    const { date, time } = isoToShop(ts);
+    if (!taken.has(date)) taken.set(date, new Set());
+    taken.get(date)[on ? 'add' : 'delete'](time);
+  };
+  let loaded = DEMO, loadFailed = configured && !db, userPickedDate = false;
+
+  const isClosed = iso => SHOP.closedDays.includes(weekdayOf(iso));
+  function daySlots(iso) {
+    const now = shopNow(), busy = DEMO ? new Set(['11:00', '13:00', '15:30']) : (taken.get(iso) || new Set()), out = [];
+    for (let m = SHOP.opens; m + SHOP.slotMinutes <= SHOP.closes; m += SHOP.slotMinutes) {
+      const time = hhmm(m);
+      out.push({ time, available: !busy.has(time) && (iso !== now.date || m > now.minutes) });
+    }
+    return out;
+  }
+  const lastDate = () => addDays(shopNow().date, SHOP.bookingDays);
   const dateProblem = iso => {
-    if (!iso || iso < dateInput.min || iso > dateInput.max) return 'Избери дата в рамките на следващите 14 дни.';
-    if (weekdayOf(iso) === SHOP.closedDay) return 'Във вторник почиваме. Избери друг ден.';
+    if (!iso || iso < shopNow().date || iso > lastDate()) return `Избери дата в рамките на следващите ${SHOP.bookingDays} дни.`;
+    if (isClosed(iso)) return 'В този ден почиваме. Избери друг ден.';
     return '';
   };
 
+  // ---- Date chips ----
+  const DAYS = ['нд', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'], MONTHS = ['яну', 'фев', 'мар', 'апр', 'май', 'юни', 'юли', 'авг', 'сеп', 'окт', 'ное', 'дек'];
+  function buildChips() {
+    const today = shopNow().date;
+    dateInput.min = today; dateInput.max = lastDate();
+    strip.replaceChildren();
+    for (let n = 0; n <= SHOP.bookingDays; n++) {
+      const iso = addDays(today, n), d = new Date(`${iso}T12:00:00Z`);
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'dchip'; b.dataset.iso = iso;
+      b.innerHTML = `<small>${n === 0 ? 'днес' : n === 1 ? 'утре' : DAYS[d.getUTCDay()]}</small><b>${d.getUTCDate()}</b><small>${MONTHS[d.getUTCMonth()]}</small>`;
+      strip.append(b);
+    }
+  }
+  function syncChips() {
+    strip.querySelectorAll('.dchip').forEach(c => {
+      const iso = c.dataset.iso, closed = isClosed(iso), full = !closed && loaded && !daySlots(iso).some(s => s.available);
+      c.disabled = closed || full;
+      c.setAttribute('aria-pressed', String(iso === dateInput.value));
+      c.setAttribute('aria-label', dayLabel(iso) + (closed ? ' — почивен ден' : full ? ' — няма свободни часове' : ''));
+    });
+  }
+  function pickDefaultDate() {
+    let d = shopNow().date;
+    const last = lastDate();
+    while (d <= last && (isClosed(d) || (loaded && !daySlots(d).some(s => s.available)))) d = addDays(d, 1);
+    dateInput.value = d <= last ? d : shopNow().date;
+  }
+  strip.addEventListener('click', e => {
+    const c = e.target.closest('.dchip');
+    if (!c || c.disabled) return;
+    userPickedDate = true;
+    dateInput.value = c.dataset.iso;
+    showMessage(); dropTicket(); renderAll();
+  });
+
+  // ---- Time slots ----
   function renderSlots() {
+    const iso = dateInput.value, keep = form.querySelector('input[name=time]:checked')?.value;
     slotsBox.replaceChildren();
-    const iso = dateInput.value, problem = dateProblem(iso);
-    if (problem) { slotStatus.textContent = problem; dateInput.setAttribute('aria-invalid', 'true'); return; }
-    dateInput.removeAttribute('aria-invalid');
-    const slots = getSlots(iso);
+    const problem = dateProblem(iso);
+    if (problem) { slotStatus.textContent = problem; return; }
+    if (!loaded) {
+      slotStatus.textContent = loadFailed
+        ? `Не успяхме да заредим свободните часове. Опитай пак след малко или се обади на ${PHONE}.`
+        : 'Зареждане на свободните часове…';
+      return;
+    }
+    const slots = daySlots(iso);
+    let kept = false;
     [['Преди обяд', s => s.time < '12:00'], ['След обяд', s => s.time >= '12:00']].forEach(([title, test]) => {
       const part = slots.filter(test);
       if (!part.length) return;
@@ -1325,58 +1407,203 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
         const label = document.createElement('label'); label.className = 'slot';
         const input = document.createElement('input');
         Object.assign(input, { type: 'radio', name: 'time', value: s.time, disabled: !s.available });
+        if (s.available && s.time === keep) { input.checked = true; kept = true; }
         input.setAttribute('aria-label', s.time + (s.available ? '' : ' — зает'));
         const span = document.createElement('span'); span.textContent = s.time;
         label.append(input, span); grid.append(label);
       });
       group.append(heading, grid); slotsBox.append(group);
     });
+    slotsBox.querySelectorAll('.slot').forEach((s, i) => s.style.setProperty('--i', i));
     const count = slots.filter(s => s.available).length;
-    const noun = count === 1 ? 'свободен час' : 'свободни часа';
-    slotStatus.textContent = count
-      ? `${dayLabel(iso)} — ${count} ${noun}. Зачеркнатите са заети.`
+    let text = count
+      ? `${dayLabel(iso)} — ${count} ${count === 1 ? 'свободен час' : 'свободни часа'}. Зачеркнатите са заети.`
       : `${dayLabel(iso)} — няма свободни часове. Избери друг ден.`;
+    if (keep && !kept) text = `Часът ${keep} току-що беше зает. ` + text;
+    slotStatus.textContent = text;
+  }
+  const renderAll = () => { syncChips(); renderSlots(); };
+
+  // ---- Loading from Supabase + live updates ----
+  async function loadSettings() {
+    const { data, error } = await db.from('business_settings').select('timezone,open_time,close_time,slot_minutes,closed_weekdays,booking_days').limit(1).maybeSingle();
+    if (error || !data) return;
+    Object.assign(SHOP, {
+      timeZone: data.timezone || SHOP.timeZone, opens: toMinutes(data.open_time), closes: toMinutes(data.close_time),
+      slotMinutes: data.slot_minutes, closedDays: (data.closed_weekdays || []).map(Number), bookingDays: data.booking_days
+    });
+    document.dispatchEvent(new Event('booking:settings'));
+  }
+  let loading = null;
+  function loadTaken() {
+    if (!db) return Promise.resolve();
+    // one request for the whole booking window; realtime keeps it current afterwards
+    loading = loading || (async () => {
+      const today = shopNow().date;
+      const { data, error } = await db.from('slot_status').select('starts_at')
+        .gte('starts_at', shopTimeToIso(today, 0)).lt('starts_at', shopTimeToIso(addDays(today, SHOP.bookingDays + 1), 0));
+      loading = null;
+      if (error) { loadFailed = !loaded; renderAll(); return; }
+      taken.clear();
+      data.forEach(r => setTaken(r.starts_at, true));
+      loaded = true; loadFailed = false;
+      if (!userPickedDate) pickDefaultDate();
+      renderAll();
+    })();
+    return loading;
+  }
+  function subscribe() {
+    db.channel('slot-status-public')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'slot_status' }, change => {
+        const row = change.eventType === 'DELETE' ? change.old : change.new;
+        if (!row || !row.starts_at) { loadTaken(); return; }
+        setTaken(row.starts_at, change.eventType !== 'DELETE');
+        renderAll();
+      })
+      .subscribe(status => { if (status === 'SUBSCRIBED') loadTaken(); });   // catch anything missed while connecting
+    // phones drop the live connection while asleep: re-check when the page comes back
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadTaken(); });
   }
 
-  const todayIso = shopNow().date;
-  dateInput.min = todayIso; dateInput.max = addDays(todayIso, SHOP.bookingDays);
-  let first = todayIso;
-  while (weekdayOf(first) === SHOP.closedDay || !getSlots(first).some(s => s.available)) first = addDays(first, 1);
-  dateInput.value = first;
-  renderSlots();
-
-  // Errors point the invalid field at the message, and restore its own hint once fixed
+  // ---- Messages, errors, ticket ----
+  const showMessage = (text = '', error = false) => {
+    message.textContent = text;
+    message.classList.toggle('error', error);
+    message.style.animation = 'none'; void message.offsetWidth; message.style.animation = '';
+  };
   const clearInvalid = field => {
     field.removeAttribute('aria-invalid');
     if (field.dataset.help) field.setAttribute('aria-describedby', field.dataset.help); else field.removeAttribute('aria-describedby');
   };
-  dateInput.addEventListener('change', () => { showMessage(); renderSlots(); });
-  slotsBox.addEventListener('change', () => showMessage());
-  [nameInput, phoneInput].forEach(i => i.addEventListener('input', () => { clearInvalid(i); showMessage(); }));
-
   const fail = (text, field) => {
     showMessage(text, true);
     if (!field) { message.focus(); return; }
     field.setAttribute('aria-invalid', 'true');
     field.setAttribute('aria-describedby', [field.dataset.help, 'booking-message'].filter(Boolean).join(' '));
+    field.style.animation = 'none'; void field.offsetWidth; field.style.animation = '';
     field.focus();
   };
-  // The submit button is always enabled: problems are explained on submit, never by a dead button
-  form.addEventListener('submit', e => {
-    e.preventDefault(); showMessage();
-    const problem = dateProblem(dateInput.value);
-    if (problem) return fail(problem, dateInput);
+  let ticket = null, icsUrl = null, doneTimer;
+  function dropTicket() {
+    if (ticket) { ticket.remove(); ticket = null; }
+    if (icsUrl) { URL.revokeObjectURL(icsUrl); icsUrl = null; }
+  }
+  const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  // Confirmation ticket with "add to calendar" (.ics for Apple/Outlook, link for Google Calendar)
+  function showTicket(iso, time, name, demo) {
+    const start = toMinutes(time), end = start + SHOP.slotMinutes;
+    const stamp = mins => iso.replace(/-/g, '') + 'T' + pad(Math.floor(mins / 60)) + pad(mins % 60) + '00';
+    const place = 'Антим I, Център, 4210 Стамболийски';
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Barbershop Razor//BG', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT',
+      `UID:${Date.now()}@barbershop-razor`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`,
+      `DTSTART;TZID=Europe/Sofia:${stamp(start)}`, `DTEND;TZID=Europe/Sofia:${stamp(end)}`,
+      'SUMMARY:Barbershop Razor', `LOCATION:${place.replace(/,/g, '\\,')}`, `DESCRIPTION:Тел. ${PHONE}`,
+      'BEGIN:VALARM', 'TRIGGER:-PT1H', 'ACTION:DISPLAY', 'DESCRIPTION:Barbershop Razor', 'END:VALARM',
+      'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+    icsUrl = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
+    const gcal = 'https://calendar.google.com/calendar/render?action=TEMPLATE' +
+      `&text=${encodeURIComponent('Barbershop Razor')}&dates=${stamp(start)}/${stamp(end)}&ctz=Europe/Sofia` +
+      `&location=${encodeURIComponent(place)}&details=${encodeURIComponent('Тел. ' + PHONE)}`;
+    ticket = document.createElement('div');
+    ticket.className = 'ticket';
+    ticket.setAttribute('role', 'group');
+    ticket.setAttribute('aria-label', 'Потвърждение на часа');
+    ticket.innerHTML = `
+      <div class="ticket-top">
+        <span class="ticket-tag${demo ? '' : ' ok'}">${demo ? 'ДЕМО · НЕ Е ЗАПАЗЕНО' : 'ЧАСЪТ Е ЗАПАЗЕН'}</span>
+        <div class="ticket-when"><strong>${dayLabel(iso)}</strong><b>${time}</b></div>
+        <p>${esc(name)} · Barbershop Razor, Антим I</p>
+      </div>
+      <div class="ticket-tear" aria-hidden="true"></div>
+      <div class="ticket-bot">
+        <span>Добави в календара</span>
+        <div class="ticket-cal">
+          <a class="btn btn--light btn--sm" href="${icsUrl}" download="razor-${iso}-${time.replace(':', '')}.ics">Apple / Outlook</a>
+          <a class="btn btn--ghost-light btn--sm" href="${gcal}" target="_blank" rel="noopener">Google Calendar</a>
+        </div>
+      </div>`;
+    message.after(ticket);
+  }
+  function succeed(iso, time, name, demo) {
+    showMessage(demo
+      ? `Демо: ${dayLabel(iso)}, ${time} ч. — ${name}. Нищо не е запазено. За истински час се обади на ${PHONE}.`
+      : `Готово, ${name}! Очакваме те ${dayLabel(iso).toLowerCase()} в ${time} ч. Ако не можеш да дойдеш, обади се на ${PHONE}.`);
+    message.focus();
+    clearTimeout(doneTimer);
+    submitBtn.classList.add('is-done');
+    submitBtn.innerHTML = 'Готово<svg class="icon done-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
+    doneTimer = setTimeout(() => { submitBtn.classList.remove('is-done'); submitBtn.innerHTML = submitHTML; }, 2600);
+    showTicket(iso, time, name, demo);
+  }
+  const setBusy = on => {
+    submitBtn.disabled = on;
+    submitBtn.setAttribute('aria-busy', String(on));
+    if (on) submitBtn.textContent = 'Записване…'; else submitBtn.innerHTML = submitHTML;
+  };
+  const REJECTED = {
+    slot_taken: 'Съжаляваме, този час току-що беше запазен. Избери друг час.',
+    in_past: 'Този час вече мина. Избери друг.',
+    closed_day: 'В този ден почиваме. Избери друг ден.',
+    outside_hours: 'Този час е извън работното време. Избери друг.',
+    too_far: `Може да запазиш час до ${SHOP.bookingDays} дни напред.`,
+    invalid_time: 'Този час не може да се запази онлайн. Избери друг.',
+    too_many_bookings: `Вече имаш няколко предстоящи часа с този номер. За още се обади на ${PHONE}.`
+  };
+
+  // ---- Submit ----
+  let sending = false;
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (sending) return;
+    showMessage(); dropTicket();
+    const iso = dateInput.value, problem = dateProblem(iso);
+    if (problem) return fail(problem, strip.querySelector('.dchip:not(:disabled)'));
+    if (!loaded) return fail(loadFailed ? `Онлайн записването временно не работи. Обади се на ${PHONE}.` : 'Изчакай свободните часове да се заредят.');
     const slot = form.querySelector('input[name=time]:checked');
     if (!slot) return fail('Избери свободен час от списъка.', slotsBox.querySelector('input:not(:disabled)'));
     const name = nameInput.value.trim();
     if (name.length < 2 || !/\p{L}/u.test(name)) return fail('Въведи името си, за да знаем кого очакваме.', nameInput);
     const phone = phoneInput.value.trim(), digits = phone.replace(/\D/g, '');
-    if (!/^\+?[\d\s().-]+$/.test(phone) || digits.length < 7 || digits.length > 15 || /^(\d)\1+$/.test(digits))
+    if (!/^\+?[\d\s().\/-]+$/.test(phone) || digits.length < 7 || digits.length > 15 || /^(\d)\1+$/.test(digits))
       return fail('Провери телефонния номер: трябва да има от 7 до 15 цифри, напр. 089 123 4567.', phoneInput);
-    // Entries stay in place so a wrong detail can be corrected and sent again
-    showMessage(`Демо: ${dayLabel(dateInput.value)}, ${slot.value} ч. — ${name}. Нищо не е запазено и данните ти не са изпратени. За истински час се обади на 089 696 8068.`);
-    message.focus();
+    const time = slot.value;
+    if (DEMO) return succeed(iso, time, name, true);
+
+    const startsAt = shopTimeToIso(iso, toMinutes(time));
+    sending = true; setBusy(true);
+    let res;
+    try { res = await db.rpc('book_slot', { p_starts_at: startsAt, p_customer_name: name, p_customer_phone: phone }); }
+    catch (err) { res = { error: err }; }
+    sending = false; setBusy(false);
+    if (res.error) return fail(`Нещо се обърка и часът не е запазен. Опитай пак или се обади на ${PHONE}.`);
+    const r = res.data || {};
+    if (!r.ok) {
+      if (r.error === 'invalid_name') return fail('Въведи името си, за да знаем кого очакваме.', nameInput);
+      if (r.error === 'invalid_phone') return fail('Провери телефонния номер: трябва да има от 7 до 15 цифри.', phoneInput);
+      if (r.error === 'slot_taken' || r.error === 'in_past') { setTaken(startsAt, true); renderAll(); }
+      else { await loadSettings(); buildChips(); renderAll(); }
+      return fail(REJECTED[r.error] || `Часът не беше запазен. Опитай пак или се обади на ${PHONE}.`);
+    }
+    setTaken(startsAt, true);
+    renderAll();
+    succeed(iso, time, name, false);
   });
+  [nameInput, phoneInput].forEach(i => i.addEventListener('input', () => { clearInvalid(i); showMessage(); dropTicket(); }));
+  slotsBox.addEventListener('change', () => { showMessage(); dropTicket(); });
+
+  // ---- Start ----
+  buildChips();
+  pickDefaultDate();
+  renderAll();
+  if (db) (async () => {
+    await loadSettings();
+    buildChips();
+    if (!userPickedDate) pickDefaultDate();
+    renderAll();
+    await loadTaken();
+    subscribe();
+  })();
+
 
   /* ================= v3 additions ================= */
   {
@@ -1406,24 +1633,28 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
       });
     });
 
-    // Open-now status (shop time zone)
+    // Open-now status (shop time zone; hours and closed days follow the booking settings)
     const pills = $$('.open-pill');
+    const ON_DAY = ['в неделя', 'в понеделник', 'във вторник', 'в сряда', 'в четвъртък', 'в петък', 'в събота'];
     const updateStatus = () => {
       const now = shopNow(), day = weekdayOf(now.date), min = now.minutes, hhmm = m => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+      const openOn = d => !SHOP.closedDays.includes(d);
       let state, text;
-      if (day !== SHOP.closedDay && min >= SHOP.opens && min < SHOP.closes) {
+      if (openOn(day) && min >= SHOP.opens && min < SHOP.closes) {
         const left = SHOP.closes - min;
         [state, text] = left <= 60 ? ['soon', `Отворено · затваря след ${left} мин.`] : ['open', `Отворено сега · до ${hhmm(SHOP.closes)}`];
-      } else if (day !== SHOP.closedDay && min < SHOP.opens) {
+      } else if (openOn(day) && min < SHOP.opens) {
         [state, text] = ['closed', `Затворено · отваря днес в ${hhmm(SHOP.opens)}`];
       } else {
-        const tomorrowClosed = (day + 1) % 7 === SHOP.closedDay;
-        [state, text] = ['closed', `Затворено · отваря ${tomorrowClosed ? 'в сряда' : 'утре'} в ${hhmm(SHOP.opens)}`];
+        let ahead = 1;
+        while (ahead < 7 && !openOn((day + ahead) % 7)) ahead++;
+        [state, text] = ['closed', `Затворено · отваря ${ahead === 1 ? 'утре' : ON_DAY[(day + ahead) % 7]} в ${hhmm(SHOP.opens)}`];
       }
       pills.forEach(p => { p.hidden = false; p.dataset.state = state; p.querySelector('.txt').textContent = text; });
     };
     updateStatus();
     setInterval(updateStatus, 30000);
+    document.addEventListener('booking:settings', updateStatus);
 
     // Scroll reveal: text and cards fade up, images wipe up — one style across the page
     const fadeTargets = $$('.about .h2, .about-copy p, .stats, .prices .head-row, .price-group h3, .price-list li, .gallery .head-row, .gallery-note, .booking .side > *, .book-card, .address-info > *, .faq .head, .acc-item, .cta .wrap > *');
@@ -1557,85 +1788,6 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
       }).observe(orbit);
     }
 
-    // Date chips: today + the next 14 days; closed or full days are disabled
-    const DAYS = ['нд', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'], MONTHS = ['яну', 'фев', 'мар', 'апр', 'май', 'юни', 'юли', 'авг', 'сеп', 'окт', 'ное', 'дек'];
-    const strip = document.getElementById('date-strip');
-    for (let n = 0; n <= SHOP.bookingDays; n++) {
-      const iso = addDays(todayIso, n), wd = weekdayOf(iso), d = new Date(`${iso}T12:00:00Z`);
-      const closed = wd === SHOP.closedDay, full = !closed && !getSlots(iso).some(s => s.available);
-      const b = el('button', 'dchip', `<small>${n === 0 ? 'днес' : n === 1 ? 'утре' : DAYS[wd]}</small><b>${d.getUTCDate()}</b><small>${MONTHS[d.getUTCMonth()]}</small>`);
-      b.type = 'button'; b.dataset.iso = iso; b.disabled = closed || full;
-      b.setAttribute('aria-label', dayLabel(iso) + (closed ? ' — почивен ден' : full ? ' — няма свободни часове' : ''));
-      strip.append(b);
-    }
-    const syncChips = () => $$('.dchip', strip).forEach(c => c.setAttribute('aria-pressed', String(c.dataset.iso === dateInput.value)));
-    strip.addEventListener('click', e => {
-      const c = e.target.closest('.dchip');
-      if (!c || c.disabled) return;
-      dateInput.value = c.dataset.iso;
-      dateInput.dispatchEvent(new Event('change'));
-    });
-    dateInput.addEventListener('change', syncChips);
-    syncChips();
-
-    // Booking micro-interactions: slots cascade in, messages replay, the button confirms
-    const indexSlots = () => $$('.slot', slotsBox).forEach((s, i) => s.style.setProperty('--i', i));
-    new MutationObserver(indexSlots).observe(slotsBox, { childList: true });
-    indexSlots();
-    const submitBtn = document.getElementById('booking-submit'), submitHTML = submitBtn.innerHTML;
-    let doneTimer, ticket = null, icsUrl = null;
-    const dropTicket = () => {
-      if (ticket) { ticket.remove(); ticket = null; }
-      if (icsUrl) { URL.revokeObjectURL(icsUrl); icsUrl = null; }
-    };
-    form.addEventListener('input', dropTicket);
-    form.addEventListener('submit', () => {
-      // runs after the booking handler above
-      message.style.animation = 'none'; void message.offsetWidth; message.style.animation = '';
-      $$('[aria-invalid="true"]', form).forEach(i => { i.style.animation = 'none'; void i.offsetWidth; i.style.animation = ''; });
-      dropTicket();
-      if (!message.textContent || message.classList.contains('error')) return;
-      clearTimeout(doneTimer);
-      submitBtn.classList.add('is-done');
-      submitBtn.innerHTML = 'Готово<svg class="icon done-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
-      doneTimer = setTimeout(() => { submitBtn.classList.remove('is-done'); submitBtn.innerHTML = submitHTML; }, 2600);
-      showTicket(dateInput.value, form.querySelector('input[name=time]:checked').value, nameInput.value.trim());
-    });
-
-    // Confirmation ticket with "add to calendar" (.ics for Apple/Outlook, link for Google Calendar)
-    function showTicket(iso, time, name) {
-      const [h, m] = time.split(':').map(Number), start = h * 60 + m, end = start + SHOP.slotMinutes;
-      const stamp = mins => iso.replace(/-/g, '') + 'T' + String(Math.floor(mins / 60)).padStart(2, '0') + String(mins % 60).padStart(2, '0') + '00';
-      const place = 'Антим I, Център, 4210 Стамболийски';
-      const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Barbershop Razor//BG', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT',
-        `UID:${Date.now()}@barbershop-razor`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`,
-        `DTSTART;TZID=Europe/Sofia:${stamp(start)}`, `DTEND;TZID=Europe/Sofia:${stamp(end)}`,
-        'SUMMARY:Barbershop Razor', `LOCATION:${place.replace(/,/g, '\\,')}`, 'DESCRIPTION:Тел. 089 696 8068',
-        'BEGIN:VALARM', 'TRIGGER:-PT1H', 'ACTION:DISPLAY', 'DESCRIPTION:Barbershop Razor', 'END:VALARM',
-        'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
-      icsUrl = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
-      const gcal = 'https://calendar.google.com/calendar/render?action=TEMPLATE' +
-        `&text=${encodeURIComponent('Barbershop Razor')}&dates=${stamp(start)}/${stamp(end)}&ctz=Europe/Sofia` +
-        `&location=${encodeURIComponent(place)}&details=${encodeURIComponent('Тел. 089 696 8068')}`;
-      ticket = el('div', 'ticket', `
-        <div class="ticket-top">
-          <span class="ticket-tag">ДЕМО · НЕ Е ЗАПАЗЕНО</span>
-          <div class="ticket-when"><strong>${dayLabel(iso)}</strong><b>${time}</b></div>
-          <p>${esc(name)} · Barbershop Razor, Антим I</p>
-        </div>
-        <div class="ticket-tear" aria-hidden="true"></div>
-        <div class="ticket-bot">
-          <span>Добави в календара</span>
-          <div class="ticket-cal">
-            <a class="btn btn--light btn--sm" href="${icsUrl}" download="razor-${iso}-${time.replace(':', '')}.ics">Apple / Outlook</a>
-            <a class="btn btn--ghost-light btn--sm" href="${gcal}" target="_blank" rel="noopener">Google Calendar</a>
-          </div>
-        </div>`);
-      ticket.setAttribute('role', 'group');
-      ticket.setAttribute('aria-label', 'Потвърждение на часа');
-      message.after(ticket);
-    }
-
     // FAQ accordion (one open at a time)
     const faq = document.getElementById('vaprosi');
     faq.addEventListener('click', e => {
@@ -1650,7 +1802,7 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
     // Copy buttons + toast
     const toastEl = document.getElementById('toast');
     let toastTimer;
-    const toast = msg => {
+    const toast = window.razorToast = msg => {
       toastEl.innerHTML = CHECK + esc(msg);
       toastEl.classList.add('show');
       clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);

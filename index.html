@@ -1281,7 +1281,14 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
   // Without them the form runs as a demo, so the page still works while the database is being set up.
   const CFG = window.RAZOR_CONFIG || {};
   const configured = !!(CFG.supabaseUrl && CFG.supabaseAnonKey && !/YOUR[-_]/i.test(CFG.supabaseUrl + CFG.supabaseAnonKey));
-  const db = configured && window.supabase ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey) : null;
+  // A bad config must never break the rest of the page: booking then shows "call us" instead
+  let db = null;
+  if (configured && !/^https:\/\/[^/\s]+/i.test(CFG.supabaseUrl)) {
+    console.error('config.js: supabaseUrl must be the Project URL, e.g. https://abcdefghijklmnopqrst.supabase.co — got:', CFG.supabaseUrl);
+  } else if (configured && window.supabase) {
+    try { db = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey); }
+    catch (err) { console.error('Supabase client could not start:', err); }
+  }
   const DEMO = !configured;
   const PHONE = '089 696 8068';
   // Defaults match the site; the real values are loaded from business_settings

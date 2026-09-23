@@ -9,6 +9,6 @@
 //
 // While these still say YOUR-…, the website's booking form runs as a demo and saves nothing.
 window.RAZOR_CONFIG = {
-  supabaseUrl: '78c3c269-011c-4dd2-9f48-f59afad923f1',
+  supabaseUrl: 'https://bpcsrvlcyfbfsoxvvlvc.supabase.co',
   supabaseAnonKey: 'sb_publishable_6CU1i42BgbJbWoexfigrqw_2FScc6Ha'
 };

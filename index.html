@@ -569,6 +569,7 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
 .ticket-when b{font-family:var(--serif);font-weight:500;font-size:44px;line-height:1;font-variant-numeric:tabular-nums}
 .ticket-top p{font-size:14px;color:var(--on-dark-muted)}
 .ticket-tag.ok{color:#9fe0b8}
+.ticket-hint{margin:0;font-size:13px;line-height:1.5;color:#e8cf8f}
 .btn--submit[disabled]{opacity:.75;cursor:progress}
 .ticket-tear{position:relative;margin:0 20px;border-top:2px dashed #4a525a}
 .ticket-tear::before,.ticket-tear::after{content:"";position:absolute;top:-12px;width:22px;height:22px;border-radius:50%;background:#fff}
@@ -1497,17 +1498,25 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
   }
   const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   // Confirmation ticket with "add to calendar" (.ics for Apple/Outlook, link for Google Calendar)
+  // How the phone can take a calendar file: iPhone Safari opens it from a data: link, apps' built-in browsers can't at all
+  const UA = navigator.userAgent;
+  const IS_IOS = /iPad|iPhone|iPod/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const IN_APP = /Instagram|FBAN|FBAV|FB_IAB|FBIOS|Messenger|Line\/|TikTok|musical_ly|Snapchat|Twitter|LinkedInApp|Pinterest|GSA\//i.test(UA);
+  const IOS_OTHER_BROWSER = IS_IOS && /CriOS|FxiOS|EdgiOS|OPiOS|YaBrowser/i.test(UA);
   function showTicket(iso, time, name, demo) {
     const start = toMinutes(time), end = start + SHOP.slotMinutes;
     const stamp = mins => iso.replace(/-/g, '') + 'T' + pad(Math.floor(mins / 60)) + pad(mins % 60) + '00';
+    // times in UTC ("…Z"): every calendar app reads them the same way, no time-zone block needed
+    const utc = mins => new Date(shopTimeToIso(iso, mins)).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
     const place = 'Антим I, Център, 4210 Стамболийски';
-    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Barbershop Razor//BG', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT',
-      `UID:${Date.now()}@barbershop-razor`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`,
-      `DTSTART;TZID=Europe/Sofia:${stamp(start)}`, `DTEND;TZID=Europe/Sofia:${stamp(end)}`,
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Barbershop Razor//BG', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
+      `UID:${iso}-${time.replace(':', '')}-${Date.now()}@barbershop-razor`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`,
+      `DTSTART:${utc(start)}`, `DTEND:${utc(end)}`,
       'SUMMARY:Barbershop Razor', `LOCATION:${place.replace(/,/g, '\\,')}`, `DESCRIPTION:Тел. ${PHONE}`,
       'BEGIN:VALARM', 'TRIGGER:-PT1H', 'ACTION:DISPLAY', 'DESCRIPTION:Barbershop Razor', 'END:VALARM',
-      'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+      'END:VEVENT', 'END:VCALENDAR', ''].join('\r\n');
     icsUrl = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
+    const icsData = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics);
     const gcal = 'https://calendar.google.com/calendar/render?action=TEMPLATE' +
       `&text=${encodeURIComponent('Barbershop Razor')}&dates=${stamp(start)}/${stamp(end)}&ctz=Europe/Sofia` +
       `&location=${encodeURIComponent(place)}&details=${encodeURIComponent('Тел. ' + PHONE)}`;
@@ -1525,10 +1534,24 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
       <div class="ticket-bot">
         <span>Добави в календара</span>
         <div class="ticket-cal">
-          <a class="btn btn--light btn--sm" href="${icsUrl}" download="razor-${iso}-${time.replace(':', '')}.ics">Apple / Outlook</a>
+          <a class="btn btn--light btn--sm ics-btn" href="${icsUrl}" download="razor-${iso}-${time.replace(':', '')}.ics">Apple / Outlook</a>
           <a class="btn btn--ghost-light btn--sm" href="${gcal}" target="_blank" rel="noopener">Google Calendar</a>
         </div>
+        <p class="ticket-hint" hidden></p>
       </div>`;
+    const icsBtn = ticket.querySelector('.ics-btn'), hint = ticket.querySelector('.ticket-hint');
+    icsBtn.addEventListener('click', e => {
+      if (!IS_IOS) return;                                   // computers and Android: the normal file download works
+      e.preventDefault();
+      if (IN_APP || IOS_OTHER_BROWSER) {
+        hint.hidden = false;
+        hint.textContent = IN_APP
+          ? 'Този вграден браузър не може да отвори Календар. Натисни ••• горе и „Отвори в браузър“ (Safari), или използвай Google Calendar.'
+          : 'На iPhone Календарът се отваря само от Safari. Отвори страницата в Safari или използвай Google Calendar.';
+        return;
+      }
+      location.href = icsData;                               // Safari shows "Add to Calendar"
+    });
     message.after(ticket);
   }
   function succeed(iso, time, name, demo) {

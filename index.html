@@ -619,11 +619,15 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .toast svg{width:16px;height:16px;flex-shrink:0;fill:none;stroke:#7ee0a8;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
 
-/* ---------- Floating book pill (desktop) ---------- */
-.float-cta{display:none}
-@media (min-width:1181px){
-  .float-cta{display:inline-flex;position:fixed;right:24px;bottom:24px;z-index:55;box-shadow:0 14px 34px rgba(20,22,25,.3);opacity:0;transform:translateY(20px);pointer-events:none;transition:opacity .35s,transform .5s var(--ease),background .2s}
-  .float-cta.show{opacity:1;transform:none;pointer-events:auto}
+/* ---------- Floating book pill (all screens) ----------
+   Floats clear of the screen edge, so phone toolbars sliding in and out never show a strip under it.
+   Shown between the hero and the booking form, hidden where other book buttons are on screen. */
+.float-cta{position:fixed;right:24px;bottom:24px;z-index:55;box-shadow:0 0 0 1px rgba(255,255,255,.28),0 14px 34px rgba(20,22,25,.32);opacity:0;transform:translateY(20px);pointer-events:none;transition:opacity .35s,transform .5s var(--ease),background .2s}
+.float-cta.show{opacity:1;transform:none;pointer-events:auto}
+.menu-open .float-cta{display:none}
+@media (max-width:1180px){
+  .float-cta{right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));height:50px;padding:0 22px 0 26px;font-size:13px}
+  body{padding-bottom:0}                       /* no full-width bar to make room for any more */
 }
 
 /* ---------- v3 responsive ---------- */
@@ -1096,10 +1100,6 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<div class="action-bar">
-  <a class="btn" href="#booking-form">Запази час<svg class="icon"><use href="#i-arrow"/></svg></a>
-</div>
-
 <dialog class="lightbox" id="lightbox" aria-label="Снимка">
   <button class="lightbox-close" type="button" aria-label="Затвори снимката"><svg class="icon"><use href="#i-close"/></svg></button>
   <button class="lightbox-nav lightbox-prev" type="button" aria-label="Предишна снимка"><svg class="icon"><use href="#i-arrow"/></svg></button>
@@ -1472,17 +1472,27 @@ body::after{content:"";position:fixed;inset:-50%;z-index:150;pointer-events:none
     addEventListener('resize', syncMenuTop);
     if (window.visualViewport) visualViewport.addEventListener('resize', syncMenuTop);
 
-    // Floating book pill shows between hero and booking form (the hero photo stays still so it never covers its caption)
+    // Floating book pill: shown once the hero's own button has scrolled away, hidden while the booking
+    // form or the closing call-to-action (which have their own buttons) are on screen
     const orbit = $('.hero-orbit'), floatCta = $('.float-cta');
-    let heroGone = false, bookingVisible = false;
+    const heroActions = $('.hero-actions'), bookingEl = $('#zapazi'), endEl = $('.cta');
+    let pillQueued = false;
     const refreshFloat = () => {
-      const on = heroGone && !bookingVisible;
+      pillQueued = false;
+      const vh = innerHeight;
+      const heroGone = heroActions.getBoundingClientRect().bottom < 0;
+      const b = bookingEl.getBoundingClientRect(), bookingOn = b.top < vh * .85 && b.bottom > vh * .15;
+      const endOn = endEl.getBoundingClientRect().top < vh * .8;
+      const on = heroGone && !bookingOn && !endOn;
+      if (floatCta.classList.contains('show') === on) return;
       floatCta.classList.toggle('show', on);
       floatCta.tabIndex = on ? 0 : -1;
       floatCta.setAttribute('aria-hidden', String(!on));
     };
-    new IntersectionObserver(e => { heroGone = !e[0].isIntersecting; refreshFloat(); }).observe($('#nachalo'));
-    new IntersectionObserver(e => { bookingVisible = e[0].isIntersecting; refreshFloat(); }, { threshold: 0.15 }).observe($('#zapazi'));
+    const queuePill = () => { if (!pillQueued) { pillQueued = true; requestAnimationFrame(refreshFloat); } };
+    addEventListener('scroll', queuePill, { passive: true });
+    addEventListener('resize', queuePill);
+    refreshFloat();
 
     // Hero orbit: scissors snip their way round the photo, leaving a cut line that is thick at the blades and tapers away
     {
